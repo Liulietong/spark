@@ -830,7 +830,7 @@ object CollapseRepartition extends Rule[LogicalPlan] {
  */
 object CollapseWindow extends Rule[LogicalPlan] {
   def apply(plan: LogicalPlan): LogicalPlan = plan transformUp {
-    case w1 @ Window(we1, ps1, os1, w2 @ Window(we2, ps2, os2, grandChild))
+    case w1 @ Window(we1, ps1, os1, rankLimit1, w2 @ Window(we2, ps2, os2, rankLimit2, grandChild))
         if ps1 == ps2 && os1 == os2 && w1.references.intersect(w2.windowOutputSet).isEmpty &&
           we1.nonEmpty && we2.nonEmpty &&
           // This assumes Window contains the same type of window expressions. This is ensured
@@ -853,12 +853,13 @@ object TransposeWindow extends Rule[LogicalPlan] {
   }
 
   def apply(plan: LogicalPlan): LogicalPlan = plan transformUp {
-    case w1 @ Window(we1, ps1, os1, w2 @ Window(we2, ps2, os2, grandChild))
+    case w1 @ Window(we1, ps1, os1, rankLimit1, w2 @ Window(we2, ps2, os2, rankLimit2, grandChild))
         if w1.references.intersect(w2.windowOutputSet).isEmpty &&
            w1.expressions.forall(_.deterministic) &&
            w2.expressions.forall(_.deterministic) &&
            compatibleParititions(ps1, ps2) =>
-      Project(w1.output, Window(we2, ps2, os2, Window(we1, ps1, os1, grandChild)))
+      Project(w1.output,
+              Window(we2, ps2, os2, rankLimit2, Window(we1, ps1, os1, grandChild)))
   }
 }
 
@@ -1176,13 +1177,26 @@ object PushPredicateThroughNonJoin extends Rule[LogicalPlan] with PredicateHelpe
       }
 
       val stayUp = rest ++ nonDeterministic
+      val rankLimitFromFilter: RankLimit = w.getRankLimitFromFilterCondition(rest)
+      val windowRankLimit: RankLimit =
+        if (rankLimitFromFilter == null) {
+          null
+        } else if (rankLimitFromFilter.rankLimit < SQLConf.get.topKSortFallbackThreshold) {
+          rankLimitFromFilter
+        } else {
+          null
+        }
 
-      if (pushDown.nonEmpty) {
+      if (!pushDown.nonEmpty && windowRankLimit == null) {
+        filter
+      } else if (pushDown.nonEmpty) {
         val pushDownPredicate = pushDown.reduce(And)
-        val newWindow = w.copy(child = Filter(pushDownPredicate, w.child))
+        val pushDownFilter = Filter(pushDownPredicate, w.child)
+        val newWindow = w.copy(rankLimit = windowRankLimit, child = pushDownFilter)
         if (stayUp.isEmpty) newWindow else Filter(stayUp.reduce(And), newWindow)
       } else {
-        filter
+        val newWindow = w.copy(rankLimit = windowRankLimit)
+        Filter(condition, newWindow)
       }
 
     case filter @ Filter(condition, union: Union) =>

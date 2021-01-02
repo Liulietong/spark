@@ -362,12 +362,13 @@ object PhysicalAggregation {
  * the rule ExtractWindowExpressions in the analyzer.
  */
 object PhysicalWindow {
-  // windowFunctionType, windowExpression, partitionSpec, orderSpec, child
-  private type ReturnType =
-    (WindowFunctionType, Seq[NamedExpression], Seq[Expression], Seq[SortOrder], LogicalPlan)
+  // windowFunctionType, windowExpression, partitionSpec, orderSpec, rankLimit, child
+  private type ReturnType = (
+    WindowFunctionType, Seq[NamedExpression], Seq[Expression],
+    Seq[SortOrder], RankLimit, LogicalPlan)
 
   def unapply(a: Any): Option[ReturnType] = a match {
-    case expr @ logical.Window(windowExpressions, partitionSpec, orderSpec, child) =>
+    case expr @ logical.Window(windowExpressions, partitionSpec, orderSpec, rankLimit, child) =>
 
       // The window expression should not be empty here, otherwise it's a bug.
       if (windowExpressions.isEmpty) {
@@ -385,7 +386,7 @@ object PhysicalWindow {
           }
         }
 
-      Some((windowFunctionType, windowExpressions, partitionSpec, orderSpec, child))
+      Some((windowFunctionType, windowExpressions, partitionSpec, orderSpec, rankLimit, child))
 
     case _ => None
   }

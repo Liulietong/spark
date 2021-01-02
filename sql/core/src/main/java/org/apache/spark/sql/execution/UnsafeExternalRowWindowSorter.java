@@ -35,6 +35,7 @@ import scala.math.Ordering;
 
 import org.apache.spark.memory.SparkOutOfMemoryError;
 import org.apache.spark.sql.catalyst.InternalRow;
+import org.apache.spark.sql.catalyst.expressions.RankLimit;
 import org.apache.spark.sql.catalyst.expressions.UnsafeProjection;
 import org.apache.spark.sql.catalyst.expressions.UnsafeRow;
 import org.apache.spark.sql.types.StructType;
@@ -54,6 +55,7 @@ public final class UnsafeExternalRowWindowSorter extends AbstractUnsafeExternalR
   private final UnsafeExternalRowSorter.PrefixComputer prefixComputerInWindow;
   private final boolean canUseRadixSortInWindow;
   private final long pageSizeBytes;
+  private final RankLimit rankLimit;
   private static final int windowSorterMapMaxSize = 1;
   private static final int totalNumSorters = windowSorterMapMaxSize + 1;
   private final HashMap<UnsafeRow,AbstractUnsafeExternalRowSorter> windowSorterMap;
@@ -62,8 +64,8 @@ public final class UnsafeExternalRowWindowSorter extends AbstractUnsafeExternalR
 
   private long numRowsInserted = 0;
 
-  private UnsafeExternalRowSorter createUnsafeExternalRowSorterForWindow() throws IOException {
-    UnsafeExternalRowSorter sorter = null;
+  private AbstractUnsafeExternalRowSorter createUnsafeExternalRowSorterForWindow() throws IOException {
+    AbstractUnsafeExternalRowSorter sorter = null;
     try {
       if (this.orderingInWindow == null) {
         sorter = UnsafeExternalRowSorter.createWithRecordComparator(
@@ -74,13 +76,31 @@ public final class UnsafeExternalRowWindowSorter extends AbstractUnsafeExternalR
           pageSizeBytes/totalNumSorters,
           false);
       } else {
-        sorter = UnsafeExternalRowSorter.create(
-          this.schema,
-          this.orderingInWindow,
-          this.prefixComparatorInWindow,
-          this.prefixComputerInWindow,
-          this.pageSizeBytes/totalNumSorters,
-          this.canUseRadixSortInWindow);
+        if (this.rankLimit == null) {
+          sorter = UnsafeExternalRowSorter.create(
+            this.schema,
+            this.orderingInWindow,
+            this.prefixComparatorInWindow,
+            this.prefixComputerInWindow,
+            this.pageSizeBytes/totalNumSorters,
+            this.canUseRadixSortInWindow);
+        } else {
+          if (this.rankLimit.getRankPrettyName().equals("rank")) {
+            sorter = UnsafeExternalRowTopNRankSorter.create(
+              this.schema,
+              this.orderingInWindow,
+              this.rankLimit.getRankLimit());
+          } else {
+            // TO DO : Support TopNSort for dense_rank and percent_rank
+            sorter = UnsafeExternalRowSorter.create(
+              this.schema,
+              this.orderingInWindow,
+              this.prefixComparatorInWindow,
+              this.prefixComputerInWindow,
+              this.pageSizeBytes/totalNumSorters,
+              this.canUseRadixSortInWindow);
+          }
+        }
       }
     } catch (SparkOutOfMemoryError e) {
       logger.error("Unable to create UnsafeExternalRowSorter due to SparkOutOfMemoryError.");
@@ -127,7 +147,8 @@ public final class UnsafeExternalRowWindowSorter extends AbstractUnsafeExternalR
       UnsafeExternalRowSorter.PrefixComputer prefixComputerAcrossWindows,
       boolean canUseRadixSortInWindow,
       boolean canUseRadixSortAcrossWindows,
-      long pageSizeBytes) throws IOException {
+      long pageSizeBytes,
+      RankLimit rankLimit) throws IOException {
     UnsafeExternalRowSorter mainSorter = UnsafeExternalRowSorter.create(
       schema,
       orderingAcrossWindows,
@@ -146,7 +167,8 @@ public final class UnsafeExternalRowWindowSorter extends AbstractUnsafeExternalR
       prefixComparatorInWindow,
       prefixComputerInWindow,
       canUseRadixSortInWindow,
-      pageSizeBytes);
+      pageSizeBytes,
+      rankLimit);
   }
 
   private UnsafeExternalRowWindowSorter(
@@ -159,7 +181,8 @@ public final class UnsafeExternalRowWindowSorter extends AbstractUnsafeExternalR
       PrefixComparator prefixComparatorInWindow,
       UnsafeExternalRowSorter.PrefixComputer prefixComputerInWindow,
       boolean canUseRadixSortInWindow,
-      long pageSizeBytes) {
+      long pageSizeBytes,
+      RankLimit rankLimit) {
     this.mainSorter = mainSorter;
     this.schema = schema;
     this.partitionSpecProjection = partitionSpecProjection;
@@ -170,6 +193,7 @@ public final class UnsafeExternalRowWindowSorter extends AbstractUnsafeExternalR
     this.prefixComputerInWindow = prefixComputerInWindow;
     this.canUseRadixSortInWindow = canUseRadixSortInWindow;
     this.pageSizeBytes = pageSizeBytes;
+    this.rankLimit = rankLimit;
     this.windowSorterMap = new HashMap<UnsafeRow,AbstractUnsafeExternalRowSorter>(
       windowSorterMapMaxSize);
     this.partitionKeyComparator = new RowComparator(orderingOfPartitionKey);

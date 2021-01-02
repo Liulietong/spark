@@ -392,7 +392,7 @@ package object dsl {
           windowExpressions: Seq[NamedExpression],
           partitionSpec: Seq[Expression],
           orderSpec: Seq[SortOrder]): LogicalPlan =
-        Window(windowExpressions, partitionSpec, orderSpec, logicalPlan)
+        Window(windowExpressions, partitionSpec, orderSpec, null, logicalPlan)
 
       def subquery(alias: Symbol): LogicalPlan = SubqueryAlias(alias.name, logicalPlan)
 

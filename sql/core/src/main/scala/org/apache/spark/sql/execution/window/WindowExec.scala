@@ -92,6 +92,7 @@ case class WindowExec(
     windowExpression: Seq[NamedExpression],
     partitionSpec: Seq[Expression],
     orderSpec: Seq[SortOrder],
+    rankLimit: RankLimit,
     child: SparkPlan)
   extends WindowExecBase {
 

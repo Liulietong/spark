@@ -1236,7 +1236,7 @@ class Analyzer(
           }
           Seq((oldVersion, oldVersion.copy(output = newOutput)))
 
-        case oldVersion @ Window(windowExpressions, _, _, child)
+        case oldVersion @ Window(windowExpressions, _, _, _, child)
             if AttributeSet(windowExpressions.map(_.toAttribute)).intersect(conflictingAttributes)
             .nonEmpty =>
           Seq((oldVersion, oldVersion.copy(windowExpressions = newAliases(windowExpressions))))
@@ -1629,7 +1629,7 @@ class Analyzer(
     val isNamedExpression = plan match {
       case Aggregate(_, aggregateExpressions, _) => aggregateExpressions.contains(attribute)
       case Project(projectList, _) => projectList.contains(attribute)
-      case Window(windowExpressions, _, _, _) => windowExpressions.contains(attribute)
+      case Window(windowExpressions, _, _, _, _) => windowExpressions.contains(attribute)
       case _ => false
     }
     val wrapper: Expression => Expression =
@@ -2712,7 +2712,7 @@ class Analyzer(
       val windowOps =
         groupedWindowExpressions.foldLeft(child) {
           case (last, ((partitionSpec, orderSpec, _), windowExpressions)) =>
-            Window(windowExpressions.toSeq, partitionSpec, orderSpec, last)
+            Window(windowExpressions.toSeq, partitionSpec, orderSpec, null, last)
         }
 
       // Finally, we create a Project to output windowOps's output
@@ -3473,11 +3473,11 @@ object CleanupAliases extends Rule[LogicalPlan] {
       val cleanedAggs = aggs.map(trimNonTopLevelAliases(_).asInstanceOf[NamedExpression])
       Aggregate(grouping.map(trimAliases), cleanedAggs, child)
 
-    case Window(windowExprs, partitionSpec, orderSpec, child) =>
+    case Window(windowExprs, partitionSpec, orderSpec, rankLimit, child) =>
       val cleanedWindowExprs =
         windowExprs.map(e => trimNonTopLevelAliases(e).asInstanceOf[NamedExpression])
       Window(cleanedWindowExprs, partitionSpec.map(trimAliases),
-        orderSpec.map(trimAliases(_).asInstanceOf[SortOrder]), child)
+        orderSpec.map(trimAliases(_).asInstanceOf[SortOrder]), null, child)
 
     case CollectMetrics(name, metrics, child) =>
       val cleanedMetrics = metrics.map {

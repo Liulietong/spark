@@ -373,7 +373,7 @@ object UnsupportedOperationChecker extends Logging {
         case Sample(_, _, _, _, child) if child.isStreaming =>
           throwError("Sampling is not supported on streaming DataFrames/Datasets")
 
-        case Window(_, _, _, child) if child.isStreaming =>
+        case Window(_, _, _, _, child) if child.isStreaming =>
           throwError("Non-time-based windows are not supported on streaming DataFrames/Datasets")
 
         case ReturnAnswer(child) if child.isStreaming =>

@@ -773,3 +773,22 @@ case class PercentRank(children: Seq[Expression]) extends RankLike with SizeBase
     If(n > one, (rank - one).cast(DoubleType) / (n - one).cast(DoubleType), 0.0d)
   override def prettyName: String = "percent_rank"
 }
+
+/**
+ * This class represents the rank limit of a window rank function.
+ * The rankPrettyName could be "rank", "dense_rank" or "percent_rank".
+ */
+case class RankLimit(
+    rankPrettyName: Option[String],
+    rankLimit: Int) {
+  require(rankPrettyName.exists(_.trim.nonEmpty), "rankPrettyName must be non-empty strings")
+  require(rankLimit > 0, "rankLimit must be positive integers")
+
+  def getRankPrettyName(): String = {
+    rankPrettyName.getOrElse("").trim
+  }
+
+  def getRankLimit(): Int = {
+    rankLimit
+  }
+}

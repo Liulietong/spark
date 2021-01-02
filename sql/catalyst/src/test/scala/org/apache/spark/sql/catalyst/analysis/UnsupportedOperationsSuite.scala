@@ -621,7 +621,7 @@ class UnsupportedOperationsSuite extends SparkFunSuite {
   testUnaryOperatorInStreamingPlan(
     "sample", Sample(0.1, 1, true, 1L, _), expectedMsg = "sampling")
   testUnaryOperatorInStreamingPlan(
-    "window", Window(Nil, Nil, Nil, _), expectedMsg = "non-time-based windows")
+    "window", Window(Nil, Nil, Nil, null, _), expectedMsg = "non-time-based windows")
 
   // Output modes with aggregation and non-aggregation plans
   testOutputMode(Append, shouldSupportAggregation = false, shouldSupportNonAggregation = true)

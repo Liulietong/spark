@@ -598,12 +598,56 @@ case class Window(
     windowExpressions: Seq[NamedExpression],
     partitionSpec: Seq[Expression],
     orderSpec: Seq[SortOrder],
+    rankLimit: RankLimit,
     child: LogicalPlan) extends UnaryNode {
 
   override def output: Seq[Attribute] =
     child.output ++ windowExpressions.map(_.toAttribute)
 
   def windowOutputSet: AttributeSet = AttributeSet(windowExpressions.map(_.toAttribute))
+
+  def getRankLimitFromFilterCondition(filterCondition: Seq[Expression]): RankLimit = {
+    val rankAlias: Option[NamedExpression] = windowExpressions.find {
+      case Alias(WindowExpression(function: RankLike, spec), name) =>
+        true
+      case _ => false
+    }
+
+    val rankPrettyName: String = if (rankAlias.isDefined) {
+      rankAlias.get match {
+        case Alias(WindowExpression(Rank(_), spec), name) => "rank"
+        case Alias(WindowExpression(PercentRank(_), spec), name) => "percent_rank"
+        case Alias(WindowExpression(DenseRank(_), spec), name) => "dense_rank"
+        case _ => ""
+      }
+    } else {
+      ""
+    }
+
+    val rankLimit = if (rankAlias.isDefined) {
+      val Alias(WindowExpression(function, spec), name) = rankAlias.get
+      val rankUpperBounds = filterCondition.flatMap {
+        case LessThan(attr: Attribute, IntegerLiteral(value)) if name == attr.name =>
+          Some(value)
+        case LessThanOrEqual(attr: Attribute, IntegerLiteral(value)) if name == attr.name =>
+          Some(value)
+        case _ => None
+      }
+      if(rankUpperBounds.isEmpty) {
+        -1
+      } else {
+        rankUpperBounds.max
+      }
+    } else {
+      -1
+    }
+
+    if (rankPrettyName == "" || rankLimit < 0) {
+      null
+    } else {
+      new RankLimit(Some(rankPrettyName), rankLimit)
+    }
+  }
 }
 
 object Expand {

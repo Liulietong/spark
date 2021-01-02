@@ -677,6 +677,7 @@ class PlannerSuite extends SharedSparkSession with AdaptiveSparkPlanHelper {
       Seq(attribute1),
       partitionSpec,
       orderSpec,
+      null,
       child = childPlan)
 
     val outputPlan = EnsureRequirements(spark.sessionState.conf).apply(inputPlan)

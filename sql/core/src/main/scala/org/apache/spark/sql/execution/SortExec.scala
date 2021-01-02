@@ -84,6 +84,7 @@ case class WindowSortExec(
     sortOrderAcrossWindows: Seq[SortOrder],
     global: Boolean,
     child: SparkPlan,
+    rankLimit: RankLimit = null,
     testSpillFrequency: Int = 0)
   extends SortExecBase(
     sortOrderAcrossWindows,
@@ -122,7 +123,8 @@ case class WindowSortExec(
         prefixComputer,
         false,
         canUseRadixSort,
-        pageSize)
+        pageSize,
+        null)
     } else {
       // Generate the bound expression in a window
       val boundSortExpressionInWindow = BindReferences.bindReference(
@@ -157,7 +159,8 @@ case class WindowSortExec(
         prefixComputer,
         canUseRadixSortInWindow,
         canUseRadixSort,
-        pageSize)
+        pageSize,
+        rankLimit)
     }
 
     if (testSpillFrequency > 0) {

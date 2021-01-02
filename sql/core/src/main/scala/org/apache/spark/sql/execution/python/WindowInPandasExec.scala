@@ -83,6 +83,7 @@ case class WindowInPandasExec(
     windowExpression: Seq[NamedExpression],
     partitionSpec: Seq[Expression],
     orderSpec: Seq[SortOrder],
+    rankLimit: RankLimit,
     child: SparkPlan)
   extends WindowExecBase {
 

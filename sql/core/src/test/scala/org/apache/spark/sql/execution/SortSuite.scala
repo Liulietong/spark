@@ -22,6 +22,9 @@ import scala.util.Random
 import org.apache.spark.AccumulatorSuite
 import org.apache.spark.sql.{RandomDataGenerator, Row}
 import org.apache.spark.sql.catalyst.dsl.expressions._
+import org.apache.spark.sql.catalyst.expressions._
+import org.apache.spark.sql.functions.col
+import org.apache.spark.sql.internal.SQLConf
 import org.apache.spark.sql.test.SharedSparkSession
 import org.apache.spark.sql.types._
 
@@ -152,5 +155,398 @@ class SortSuite extends SparkPlanTest with SharedSparkSession {
         global = true, child = child),
       input.sortBy(t => (t._2, t._1)).map(Row.fromTuple),
       sortAnswers = false)
+  }
+
+  test("topN sorting in two windows with duplicated ranks") {
+    val input = Seq(
+      ("Hello", 83, 8.0),
+      ("World", 13, 1.0),
+      ("Hello", 3, 3.0),
+      ("World", 23, 2.0),
+      ("World", 21, 1.0),
+      ("Hello", 83, 8.0),
+      ("World", 13, 8.0),
+      ("World", 23, 1.0),
+      ("Hello", 83, 8.0),
+      ("Hello", 83, 8.0),
+      ("World", 23, 1.0),
+      ("Hello", 38, 3.0)
+    )
+
+    val inputFilteredByRankLessThanThree = Seq(
+      ("Hello", 83, 8.0),
+      ("World", 13, 1.0),
+      ("Hello", 3, 3.0),
+      ("World", 21, 1.0),
+      ("Hello", 83, 8.0),
+      ("World", 13, 8.0),
+      ("Hello", 83, 8.0),
+      ("Hello", 83, 8.0),
+      ("Hello", 38, 3.0)
+    )
+
+    withSQLConf(SQLConf.SHUFFLE_PARTITIONS.key -> "2") {
+      checkAnswer(
+        input.toDF("a", "b", "c").repartition(col("a")),
+        (child: SparkPlan) => WindowSortExec(
+          'a :: Nil,
+          'b.asc :: Nil,
+          'a.asc :: 'b.asc :: Nil,
+          global = true,
+          rankLimit = new RankLimit(Some("rank"), 3),
+          child = child),
+        inputFilteredByRankLessThanThree.sortBy(t => (t._1, t._2)).map(Row.fromTuple),
+        sortAnswers = false)
+    }
+  }
+
+  test("topN sorting in two windows with unique ranks") {
+    val input = Seq(
+      ("Hello", 55, 2.0),
+      ("World", 13, 1.0),
+      ("Hello", 3, 3.0),
+      ("World", 47, 2.0),
+      ("World", 21, 1.0),
+      ("World", 88, 3.0),
+      ("Hello", 43, 2.0),
+      ("World", 61, 1.0),
+      ("Hello", 83, 3.0),
+      ("Hello", 47, 2.0),
+      ("World", 23, 1.0),
+      ("Hello", 38, 3.0)
+    )
+
+    val inputFilteredByRankLessThanThree = Seq(
+      ("Hello", 3, 3.0),
+      ("Hello", 38, 3.0),
+      ("Hello", 43, 2.0),
+      ("World", 13, 1.0),
+      ("World", 21, 1.0),
+      ("World", 23, 1.0)
+    )
+
+    withSQLConf(SQLConf.SHUFFLE_PARTITIONS.key -> "2") {
+      val inputDF = input.toDF("a", "b", "c").repartition(col("a"))
+
+      checkAnswer(
+        inputDF,
+        (child: SparkPlan) => WindowSortExec(
+          'a :: Nil,
+          'b.asc :: Nil,
+          'a.asc :: 'b.asc :: Nil,
+          global = true,
+          rankLimit = new RankLimit(Some("rank"), 3),
+          child = child),
+        inputFilteredByRankLessThanThree.sortBy(t => (t._1, t._2)).map(Row.fromTuple),
+        sortAnswers = false)
+    }
+  }
+
+  test("topN sorting a window with the rank limit not exceeded") {
+    val input = Seq(
+      ("Hello", 83, 8.0),
+      ("Hello", 3, 3.0),
+      ("Hello", 83, 8.0),
+      ("Hello", 83, 8.0),
+      ("Hello", 83, 8.0),
+      ("Hello", 83, 8.0),
+      ("Hello", 38, 3.0)
+    )
+
+    withSQLConf(SQLConf.SHUFFLE_PARTITIONS.key -> "2") {
+      checkAnswer(
+        input.toDF("a", "b", "c").repartition(col("a")),
+        (child: SparkPlan) => WindowSortExec(
+          'a :: Nil,
+          'b.asc :: Nil,
+          'a.asc :: 'b.asc :: Nil,
+          global = true,
+          rankLimit = new RankLimit(Some("rank"), 3),
+          child = child),
+        input.sortBy(t => (t._1, t._2)).map(Row.fromTuple),
+        sortAnswers = false)
+    }
+  }
+
+  test("topN sorting in a window with rank limit exceeded " +
+       "due to duplicated ranks under rank limit") {
+    val input = Seq(
+      ("Hello", 83, 8.0),
+      ("Hello", 3, 3.0),
+      ("Hello", 83, 8.0),
+      ("Hello", 83, 8.0),
+      ("Hello", 83, 8.0),
+      ("Hello", 83, 8.0),
+      ("Hello", 38, 3.0),
+      ("Hello", 38, 3.0)
+    )
+
+    val inputFilteredByRankLessThanThree = Seq(
+      ("Hello", 3, 3.0),
+      ("Hello", 38, 3.0),
+      ("Hello", 38, 3.0)
+    )
+
+    withSQLConf(SQLConf.SHUFFLE_PARTITIONS.key -> "1") {
+      checkAnswer(
+        input.toDF("a", "b", "c").repartition(col("a")),
+        (child: SparkPlan) => WindowSortExec(
+          'a :: Nil,
+          'b.asc :: Nil,
+          'a.asc :: 'b.asc :: Nil,
+          global = true,
+          rankLimit = new RankLimit(Some("rank"), 3),
+          child = child),
+        inputFilteredByRankLessThanThree.sortBy(t => (t._1, t._2)).map(Row.fromTuple),
+        sortAnswers = false)
+    }
+  }
+
+ test("topN sorting in a window with rank limit exceeded " +
+       "due to unique ranks under rank limit") {
+    val input = Seq(
+      ("Hello", 83, 8.0),
+      ("Hello", 3, 3.0),
+      ("Hello", 83, 8.0),
+      ("Hello", 83, 8.0),
+      ("Hello", 83, 8.0),
+      ("Hello", 83, 8.0),
+      ("Hello", 38, 3.0),
+      ("Hello", 8, 9.0)
+    )
+
+    val inputFilteredByRankLessThanThree = Seq(
+      ("Hello", 3, 3.0),
+      ("Hello", 8, 9.0),
+      ("Hello", 38, 3.0)
+    )
+
+    withSQLConf(SQLConf.SHUFFLE_PARTITIONS.key -> "1") {
+      checkAnswer(
+        input.toDF("a", "b", "c").repartition(col("a")),
+        (child: SparkPlan) => WindowSortExec(
+          'a :: Nil,
+          'b.asc :: Nil,
+          'a.asc :: 'b.asc :: Nil,
+          global = true,
+          rankLimit = new RankLimit(Some("rank"), 3),
+          child = child),
+        inputFilteredByRankLessThanThree.sortBy(t => (t._1, t._2)).map(Row.fromTuple),
+        sortAnswers = false)
+    }
+  }
+
+  test("topN sorting in a window with duplicated 2nd rank rows not exceeding the rank limit") {
+    val input = Seq(
+      ("Hello", 2, 1.0),
+      ("Hello", 2, 2.0),
+      ("Hello", 2, 3.0),
+      ("Hello", 2, 4.0),
+      ("Hello", 2, 5.0),
+      ("Hello", 2, 6.0),
+      ("Hello", 1, 8.0),
+      ("Hello", 2, 7.0),
+      ("Hello", 2, 8.0),
+      ("Hello", 2, 9.0),
+      ("Hello", 2, 10.0),
+      ("Hello", 2, 11.0)
+    )
+
+    val inputFilteredByRankLessThanTwo = Seq(
+      ("Hello", 2, 1.0),
+      ("Hello", 2, 2.0),
+      ("Hello", 1, 8.0),
+      ("Hello", 2, 3.0),
+      ("Hello", 2, 4.0),
+      ("Hello", 2, 5.0),
+      ("Hello", 2, 6.0),
+      ("Hello", 2, 7.0),
+      ("Hello", 2, 8.0),
+      ("Hello", 2, 9.0),
+      ("Hello", 2, 10.0),
+      ("Hello", 2, 11.0)
+    )
+
+    withSQLConf(SQLConf.SHUFFLE_PARTITIONS.key -> "1") {
+      checkAnswer(
+        input.toDF("a", "b", "c").repartition(col("a")),
+        (child: SparkPlan) => WindowSortExec(
+          'a :: Nil,
+          'b.asc :: Nil,
+          'a.asc :: 'b.asc :: Nil,
+          global = true,
+          rankLimit = new RankLimit(Some("rank"), 2),
+          child = child),
+        inputFilteredByRankLessThanTwo.sortBy(t => (t._1, t._2)).map(Row.fromTuple),
+        sortAnswers = true)
+    }
+  }
+
+  test("topN sorting in a window with different rows of equal weight exceeding the rank limit") {
+    val input = Seq(
+      ("Hello", 2, 1.0),
+      ("Hello", 2, 2.0),
+      ("Hello", 2, 3.0),
+      ("Hello", 2, 4.0),
+      ("Hello", 2, 5.0),
+      ("Hello", 0, 8.0),
+      ("Hello", 2, 6.0),
+      ("Hello", 2, 7.0),
+      ("Hello", 2, 8.0),
+      ("Hello", 2, 9.0),
+      ("Hello", 2, 10.0),
+      ("Hello", 1, 10.0),
+      ("Hello", 2, 11.0)
+    )
+
+    val inputFilteredByRankLessThanTwo = Seq(
+      ("Hello", 0, 8.0),
+      ("Hello", 1, 10.0)
+    )
+
+    withSQLConf(SQLConf.SHUFFLE_PARTITIONS.key -> "1") {
+      checkAnswer(
+        input.toDF("a", "b", "c").repartition(col("a")),
+        (child: SparkPlan) => WindowSortExec(
+          'a :: Nil,
+          'b.asc :: Nil,
+          'a.asc :: 'b.asc :: Nil,
+          global = true,
+          rankLimit = new RankLimit(Some("rank"), 2),
+          child = child),
+        inputFilteredByRankLessThanTwo.sortBy(t => (t._1, t._2)).map(Row.fromTuple),
+        sortAnswers = true)
+    }
+  }
+
+  test("topN sorting in a window with all rows being different but equal") {
+    val input = Seq(
+      ("Hello", 3, 1.0),
+      ("Hello", 2, 2.0),
+      ("Hello", 2, 3.0),
+      ("Hello", 2, 4.0),
+      ("Hello", 2, 5.0),
+      ("Hello", 2, 6.0),
+      ("Hello", 2, 7.0),
+      ("Hello", 2, 8.0),
+      ("Hello", 2, 9.0),
+      ("Hello", 2, 10.0),
+      ("Hello", 2, 11.0)
+    )
+
+    val inputFilteredByRankLessThanTwo = Seq(
+      ("Hello", 2, 2.0),
+      ("Hello", 2, 3.0),
+      ("Hello", 2, 4.0),
+      ("Hello", 2, 5.0),
+      ("Hello", 2, 6.0),
+      ("Hello", 2, 7.0),
+      ("Hello", 2, 8.0),
+      ("Hello", 2, 9.0),
+      ("Hello", 2, 10.0),
+      ("Hello", 2, 11.0)
+    )
+
+    withSQLConf(SQLConf.SHUFFLE_PARTITIONS.key -> "1") {
+      checkAnswer(
+        input.toDF("a", "b", "c").repartition(col("a")),
+        (child: SparkPlan) => WindowSortExec(
+          'a :: Nil,
+          'b.asc :: Nil,
+          'a.asc :: 'b.asc :: Nil,
+          global = true,
+          rankLimit = new RankLimit(Some("rank"), 2),
+          child = child),
+        inputFilteredByRankLessThanTwo.sortBy(t => (t._1, t._2)).map(Row.fromTuple),
+        sortAnswers = true)
+    }
+  }
+
+  test("topN sorting a windows with the many 1st rank row using up the rank limit") {
+    val input = Seq(
+      ("Hello", 2, 2.0),
+      ("Hello", 2, 3.0),
+      ("Hello", 2, 4.0),
+      ("Hello", 2, 5.0),
+      ("Hello", 2, 6.0),
+      ("Hello", 2, 7.0),
+      ("Hello", 2, 8.0),
+      ("Hello", 2, 9.0),
+      ("Hello", 2, 10.0),
+      ("Hello", 2, 11.0),
+      ("Hello", 3, 1.0)
+    )
+
+    val inputFilteredByRankLessThanTwo = Seq(
+      ("Hello", 2, 2.0),
+      ("Hello", 2, 3.0),
+      ("Hello", 2, 4.0),
+      ("Hello", 2, 5.0),
+      ("Hello", 2, 6.0),
+      ("Hello", 2, 7.0),
+      ("Hello", 2, 8.0),
+      ("Hello", 2, 9.0),
+      ("Hello", 2, 10.0),
+      ("Hello", 2, 11.0)
+    )
+
+    withSQLConf(SQLConf.SHUFFLE_PARTITIONS.key -> "1") {
+      checkAnswer(
+        input.toDF("a", "b", "c").repartition(col("a")),
+        (child: SparkPlan) => WindowSortExec(
+          'a :: Nil,
+          'b.asc :: Nil,
+          'a.asc :: 'b.asc :: Nil,
+          global = true,
+          rankLimit = new RankLimit(Some("rank"), 2),
+          child = child),
+        inputFilteredByRankLessThanTwo.sortBy(t => (t._1, t._2)).map(Row.fromTuple),
+        sortAnswers = true)
+    }
+  }
+
+  test("topN sorting in a window with many 2nd rank row using up the rank limit") {
+    val input = Seq(
+      ("Hello", 3, 1.0),
+      ("Hello", 2, 2.0),
+      ("Hello", 2, 3.0),
+      ("Hello", 2, 4.0),
+      ("Hello", 2, 5.0),
+      ("Hello", 2, 6.0),
+      ("Hello", 2, 7.0),
+      ("Hello", 2, 8.0),
+      ("Hello", 2, 9.0),
+      ("Hello", 2, 10.0),
+      ("Hello", 2, 11.0),
+      ("Hello", 1, 1.0),
+    )
+
+    val inputFilteredByRankLessThanTwo = Seq(
+      ("Hello", 1, 1.0),
+      ("Hello", 2, 2.0),
+      ("Hello", 2, 3.0),
+      ("Hello", 2, 4.0),
+      ("Hello", 2, 5.0),
+      ("Hello", 2, 6.0),
+      ("Hello", 2, 7.0),
+      ("Hello", 2, 8.0),
+      ("Hello", 2, 9.0),
+      ("Hello", 2, 10.0),
+      ("Hello", 2, 11.0)
+    )
+
+    withSQLConf(SQLConf.SHUFFLE_PARTITIONS.key -> "1") {
+      checkAnswer(
+        input.toDF("a", "b", "c").repartition(col("a")),
+        (child: SparkPlan) => WindowSortExec(
+          'a :: Nil,
+          'b.asc :: Nil,
+          'a.asc :: 'b.asc :: Nil,
+          global = true,
+          rankLimit = new RankLimit(Some("rank"), 2),
+          child = child),
+        inputFilteredByRankLessThanTwo.sortBy(t => (t._1, t._2)).map(Row.fromTuple),
+        sortAnswers = true)
+    }
   }
 }
